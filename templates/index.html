@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ollama 模型壓力測試</title>
+    
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        .hardware-card {
+            transition: transform 0.2s;
+        }
+        .hardware-card:hover {
+            transform: translateY(-2px);
+        }
+        .progress-container {
+            display: none;
+        }
+        .test-results {
+            display: none;
+        }
+        .log-container {
+            max-height: 400px;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 0.375rem;
+            padding: 1rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.875rem;
+        }
+        .status-badge {
+            font-size: 0.75rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid py-4">
+        <!-- 標題 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h1 class="text-center mb-3">
+                    <i class="bi bi-cpu"></i> Ollama 模型壓力測試
+                </h1>
+                <p class="text-center text-muted">測試不同Ollama模型在您系統上的性能表現</p>
+            </div>
+        </div>
+
+        <!-- 硬體資訊區域 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h2><i class="bi bi-pc-display"></i> 系統硬體資訊</h2>
+            </div>
+        </div>
+        
+        <div class="row mb-4" id="hardware-info">
+            <!-- 系統資訊 -->
+            <div class="col-md-6 col-lg-3 mb-3">
+                <div class="card hardware-card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="bi bi-info-circle"></i> 系統</h5>
+                        <p class="card-text">
+                            <strong>平台:</strong> {{ hardware_info.system.platform }}<br>
+                            <strong>處理器:</strong> {{ hardware_info.system.processor }}<br>
+                            <strong>架構:</strong> {{ hardware_info.system.machine }}
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CPU資訊 -->
+            <div class="col-md-6 col-lg-3 mb-3">
+                <div class="card hardware-card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="bi bi-cpu"></i> CPU</h5>
+                        <p class="card-text">
+                            <strong>核心數:</strong> {{ hardware_info.cpu.cores_physical }} 實體 / {{ hardware_info.cpu.cores_logical }} 邏輯<br>
+                            <strong>使用率:</strong> {{ "%.1f"|format(hardware_info.cpu.usage_percent) }}%<br>
+                            <strong>頻率:</strong> {{ hardware_info.cpu.frequency_current }} MHz
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 記憶體資訊 -->
+            <div class="col-md-6 col-lg-3 mb-3">
+                <div class="card hardware-card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="bi bi-memory"></i> 記憶體</h5>
+                        <p class="card-text">
+                            <strong>總容量:</strong> {{ "%.1f"|format(hardware_info.memory.total_gb) }} GB<br>
+                            <strong>可用:</strong> {{ "%.1f"|format(hardware_info.memory.available_gb) }} GB<br>
+                            <strong>使用率:</strong> {{ "%.1f"|format(hardware_info.memory.usage_percent) }}%
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- GPU資訊 -->
+            <div class="col-md-6 col-lg-3 mb-3">
+                <div class="card hardware-card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="bi bi-gpu-card"></i> GPU</h5>
+                        <div class="card-text" id="gpu-info">
+                            {% if hardware_info.gpu and hardware_info.gpu is not mapping %}
+                                {% for gpu in hardware_info.gpu %}
+                                    <strong>{{ gpu.name }}</strong><br>
+                                    VRAM: {{ gpu.memory_total_mb }} MB<br>
+                                    使用率: {{ gpu.gpu_usage_percent }}%<br>
+                                {% endfor %}
+                            {% else %}
+                                <span class="text-muted">未檢測到GPU或資訊不可用</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 測試配置區域 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h2><i class="bi bi-gear"></i> 測試配置</h2>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-lg-6">
+                <div class="card">
+                    <div class="card-body">
+                        <form id="stress-test-form">
+                            <div class="mb-3">
+                                <label for="model-select" class="form-label">選擇模型</label>
+                                <select class="form-select" id="model-select" required>
+                                    <option value="">請選擇模型...</option>
+                                    {% for model in models %}
+                                        <option value="{{ model.name }}">{{ model.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="concurrent-requests" class="form-label">並發請求數</label>
+                                <input type="number" class="form-control" id="concurrent-requests" 
+                                       min="1" max="20" value="3" required>
+                                <div class="form-text">同時發送的請求數量 (1-20)</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="total-requests" class="form-label">總請求數</label>
+                                <input type="number" class="form-control" id="total-requests" 
+                                       min="1" max="1000" value="10" required>
+                                <div class="form-text">總共要發送的請求數量</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="test-prompt" class="form-label">測試提示</label>
+                                <textarea class="form-control" id="test-prompt" rows="3" required>請用繁體中文回答：什麼是人工智慧？</textarea>
+                                <div class="form-text">用於測試的提示文字</div>
+                            </div>
+
+                            <div class="d-grid gap-2">
+                                <button type="submit" class="btn btn-primary btn-lg" id="start-test-btn">
+                                    <i class="bi bi-play-circle"></i> 開始測試
+                                </button>
+                                <button type="button" class="btn btn-danger" id="stop-test-btn" style="display: none;">
+                                    <i class="bi bi-stop-circle"></i> 停止測試
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-6">
+                <!-- 測試進度 -->
+                <div class="card progress-container">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            <i class="bi bi-activity"></i> 測試進度
+                            <span class="badge bg-primary status-badge" id="test-status">準備中</span>
+                        </h5>
+                        
+                        <div class="mb-3">
+                            <div class="progress" style="height: 20px;">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     id="progress-bar" role="progressbar" style="width: 0%">0%</div>
+                            </div>
+                        </div>
+
+                        <div class="row text-center">
+                            <div class="col-4">
+                                <div class="h4 text-success" id="completed-count">0</div>
+                                <small class="text-muted">已完成</small>
+                            </div>
+                            <div class="col-4">
+                                <div class="h4 text-danger" id="failed-count">0</div>
+                                <small class="text-muted">失敗</small>
+                            </div>
+                            <div class="col-4">
+                                <div class="h4 text-info" id="total-count">0</div>
+                                <small class="text-muted">總計</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 測試結果 -->
+                <div class="card test-results mt-3">
+                    <div class="card-body">
+                        <h5 class="card-title"><i class="bi bi-bar-chart"></i> 測試結果</h5>
+                        <div id="test-statistics"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 測試日誌 -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            <i class="bi bi-journal-text"></i> 測試日誌
+                            <button class="btn btn-sm btn-outline-secondary float-end" id="clear-log-btn">
+                                <i class="bi bi-trash"></i> 清除
+                            </button>
+                        </h5>
+                        <div class="log-container" id="test-log"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap 5 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Socket.IO -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    
+    <script>
+        // 全局變量
+        let socket;
+        let currentTestId = null;
+        let testStartTime = null;
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeSocketIO();
+            setupEventListeners();
+            refreshHardwareInfo();
+        });
+
+        // 初始化Socket.IO連接
+        function initializeSocketIO() {
+            socket = io();
+            
+            socket.on('connect', function() {
+                addLog('已連接到服務器', 'success');
+            });
+
+            socket.on('disconnect', function() {
+                addLog('與服務器連接中斷', 'warning');
+            });
+
+            socket.on('test_started', function(data) {
+                addLog(`測試已開始 (ID: ${data.test_id})`, 'info');
+            });
+
+            socket.on('test_progress', function(data) {
+                updateProgress(data);
+            });
+
+            socket.on('test_completed', function(data) {
+                handleTestCompleted(data);
+            });
+
+            socket.on('test_error', function(data) {
+                addLog(`測試錯誤: ${data.error}`, 'danger');
+                resetTestUI();
+            });
+        }
+
+        // 設置事件監聽器
+        function setupEventListeners() {
+            document.getElementById('stress-test-form').addEventListener('submit', startTest);
+            document.getElementById('stop-test-btn').addEventListener('click', stopTest);
+            document.getElementById('clear-log-btn').addEventListener('click', clearLog);
+        }
+
+        // 開始測試
+        async function startTest(event) {
+            event.preventDefault();
+            
+            const config = {
+                model: document.getElementById('model-select').value,
+                concurrent_requests: parseInt(document.getElementById('concurrent-requests').value),
+                total_requests: parseInt(document.getElementById('total-requests').value),
+                prompt: document.getElementById('test-prompt').value
+            };
+
+            try {
+                const response = await fetch('/api/start_test', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(config)
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    currentTestId = result.test_id;
+                    testStartTime = new Date();
+                    setupTestUI();
+                    addLog(`開始測試: ${config.model} (${config.concurrent_requests} 並發, ${config.total_requests} 總請求)`, 'info');
+                } else {
+                    addLog(`測試啟動失敗: ${result.error}`, 'danger');
+                }
+            } catch (error) {
+                addLog(`請求錯誤: ${error.message}`, 'danger');
+            }
+        }
+
+        // 停止測試
+        async function stopTest() {
+            if (!currentTestId) return;
+
+            try {
+                const response = await fetch('/api/stop_test', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ test_id: currentTestId })
+                });
+
+                const result = await response.json();
+                addLog(result.message, result.success ? 'warning' : 'danger');
+                
+                if (result.success) {
+                    resetTestUI();
+                }
+            } catch (error) {
+                addLog(`停止測試錯誤: ${error.message}`, 'danger');
+            }
+        }
+
+        // 設置測試UI
+        function setupTestUI() {
+            document.getElementById('start-test-btn').style.display = 'none';
+            document.getElementById('stop-test-btn').style.display = 'block';
+            document.querySelector('.progress-container').style.display = 'block';
+            document.getElementById('test-status').textContent = '運行中';
+            document.getElementById('test-status').className = 'badge bg-success status-badge';
+        }
+
+        // 重置測試UI
+        function resetTestUI() {
+            document.getElementById('start-test-btn').style.display = 'block';
+            document.getElementById('stop-test-btn').style.display = 'none';
+            document.getElementById('test-status').textContent = '已停止';
+            document.getElementById('test-status').className = 'badge bg-secondary status-badge';
+            currentTestId = null;
+        }
+
+        // 更新進度
+        function updateProgress(data) {
+            const progressBar = document.getElementById('progress-bar');
+            const progress = Math.round(data.progress);
+            
+            progressBar.style.width = `${progress}%`;
+            progressBar.textContent = `${progress}%`;
+            
+            document.getElementById('completed-count').textContent = data.completed;
+            document.getElementById('failed-count').textContent = data.failed;
+            document.getElementById('total-count').textContent = data.total;
+            
+            if (data.latest_result) {
+                const status = data.latest_result.success ? '成功' : '失敗';
+                const responseTime = data.latest_result.response_time ? 
+                    `${data.latest_result.response_time.toFixed(2)}s` : 'N/A';
+                addLog(`請求 ${data.latest_result.task_id + 1}: ${status} (${responseTime})`, 
+                       data.latest_result.success ? 'success' : 'danger');
+            }
+        }
+
+        // 處理測試完成
+        function handleTestCompleted(data) {
+            addLog('測試完成！', 'success');
+            resetTestUI();
+            
+            document.getElementById('test-status').textContent = '已完成';
+            document.getElementById('test-status').className = 'badge bg-success status-badge';
+            
+            // 顯示統計結果
+            displayStatistics(data.statistics);
+            document.querySelector('.test-results').style.display = 'block';
+        }
+
+        // 顯示統計結果
+        function displayStatistics(stats) {
+            const statsContainer = document.getElementById('test-statistics');
+            
+            const html = `
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>請求統計</h6>
+                        <ul class="list-unstyled">
+                            <li><strong>總請求數:</strong> ${stats.total_requests}</li>
+                            <li><strong>成功請求:</strong> ${stats.successful_requests}</li>
+                            <li><strong>失敗請求:</strong> ${stats.failed_requests}</li>
+                            <li><strong>成功率:</strong> ${stats.success_rate.toFixed(2)}%</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>響應時間統計</h6>
+                        <ul class="list-unstyled">
+                            <li><strong>最小值:</strong> ${stats.response_time_stats.min?.toFixed(2) || 'N/A'}s</li>
+                            <li><strong>最大值:</strong> ${stats.response_time_stats.max?.toFixed(2) || 'N/A'}s</li>
+                            <li><strong>平均值:</strong> ${stats.response_time_stats.mean?.toFixed(2) || 'N/A'}s</li>
+                            <li><strong>中位數:</strong> ${stats.response_time_stats.median?.toFixed(2) || 'N/A'}s</li>
+                        </ul>
+                    </div>
+                </div>
+            `;
+            
+            statsContainer.innerHTML = html;
+        }
+
+        // 添加日誌
+        function addLog(message, type = 'info') {
+            const logContainer = document.getElementById('test-log');
+            const timestamp = new Date().toLocaleTimeString();
+            const colorClass = {
+                'success': 'text-success',
+                'danger': 'text-danger',
+                'warning': 'text-warning',
+                'info': 'text-info'
+            }[type] || 'text-dark';
+            
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<span class="text-muted">[${timestamp}]</span> <span class="${colorClass}">${message}</span>`;
+            
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        // 清除日誌
+        function clearLog() {
+            document.getElementById('test-log').innerHTML = '';
+        }
+
+        // 刷新硬體資訊
+        async function refreshHardwareInfo() {
+            try {
+                const response = await fetch('/api/hardware');
+                const hardwareInfo = await response.json();
+                // 可以在這裡更新硬體資訊顯示
+                addLog('硬體資訊已更新', 'info');
+            } catch (error) {
+                addLog(`獲取硬體資訊失敗: ${error.message}`, 'warning');
+            }
+        }
+    </script>
+
+    <!-- Bootstrap 5 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Socket.IO -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <!-- 自定義JavaScript -->
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+
+    <script>
+        // 初始化應用
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeSocket();
+            loadHardwareInfo();
+            setupEventListeners();
+        });
+    </script>
+</body>
+</html>
