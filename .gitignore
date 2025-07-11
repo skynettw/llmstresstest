@@ -1,0 +1,10 @@
+__pycache__/
+.vscode/
+.vs/
+.idea/
+.DS_Store
+.vscode/*
+.vs/*
+.idea/*
+.DS_Store
+db.sqlite3

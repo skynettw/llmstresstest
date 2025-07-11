@@ -9,12 +9,14 @@ from datetime import datetime
 from hardware_info import get_hardware_info
 from ollama_client import OllamaClient
 from stress_test_simple import StressTestManager
+from multi_user_stress_test import MultiUserStressTestManager
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'ollama-stress-test-secret-key'
 
 # 全局變量
 stress_test_manager = StressTestManager()
+multi_user_test_manager = MultiUserStressTestManager()
 ollama_client = OllamaClient()
 
 @app.route('/')
@@ -22,7 +24,7 @@ def index():
     """首頁 - 顯示硬體資訊和測試表單"""
     hardware_info = get_hardware_info()
     models = ollama_client.get_available_models()
-    return render_template('index_simple.html', 
+    return render_template('index.html', 
                          hardware_info=hardware_info, 
                          models=models)
 
@@ -94,6 +96,76 @@ def test_charts(test_id):
     # 生成圖表
     charts = generate_test_charts(results, status.get('statistics', {}))
     return jsonify(charts)
+
+# ===== 測試二 - 多用戶並發測試 API =====
+
+@app.route('/api/start_multi_user_test', methods=['POST'])
+def start_multi_user_test():
+    """開始多用戶並發測試"""
+    test_config = request.json
+
+    # 驗證測試配置
+    required_fields = ['model', 'user_count', 'queries_per_user']
+    for field in required_fields:
+        if field not in test_config:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+
+    try:
+        # 開始測試
+        test_id = multi_user_test_manager.start_multi_user_test(test_config)
+
+        return jsonify({
+            'success': True,
+            'test_id': test_id,
+            'message': 'Multi-user test started successfully'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/stop_multi_user_test', methods=['POST'])
+def stop_multi_user_test():
+    """停止多用戶測試"""
+    test_id = request.json.get('test_id')
+    if not test_id:
+        return jsonify({'error': 'Missing test_id'}), 400
+
+    success = multi_user_test_manager.stop_test(test_id)
+
+    return jsonify({
+        'success': success,
+        'message': 'Multi-user test stopped' if success else 'Test not found or already stopped'
+    })
+
+@app.route('/api/multi_user_test_status/<test_id>')
+def multi_user_test_status(test_id):
+    """獲取多用戶測試狀態"""
+    status = multi_user_test_manager.get_test_status(test_id)
+    if status:
+        return jsonify(status)
+    else:
+        return jsonify({'error': 'Test not found'}), 404
+
+@app.route('/api/multi_user_test_charts/<test_id>')
+def multi_user_test_charts(test_id):
+    """獲取多用戶測試圖表數據"""
+    # 從多用戶測試管理器獲取測試結果
+    test_info = multi_user_test_manager.active_tests.get(test_id)
+    if not test_info:
+        # 檢查是否在已完成的測試中
+        test_result = multi_user_test_manager.test_results.get(test_id)
+        if not test_result:
+            return jsonify({'error': 'Test not found'}), 404
+
+        # 生成多用戶測試圖表
+        charts = generate_multi_user_test_charts(test_result)
+        return jsonify(charts)
+
+    # 如果測試還在進行中，檢查是否有結果數據
+    if 'result' in test_info and test_info['result'].query_results:
+        charts = generate_multi_user_test_charts(test_info['result'])
+        return jsonify(charts)
+
+    return jsonify({'error': 'No test results available'}), 404
 
 def generate_test_charts(results, statistics):
     """生成測試結果圖表"""
@@ -264,6 +336,162 @@ def generate_test_charts(results, statistics):
             }]
         )
         charts['response_time_box'] = plotly.utils.PlotlyJSONEncoder().encode(fig_box)
+
+    return charts
+
+def generate_multi_user_test_charts(test_result):
+    """生成多用戶測試專用圖表"""
+    charts = {}
+
+    if not test_result or not test_result.query_results:
+        return charts
+
+    query_results = test_result.query_results
+    successful_results = [r for r in query_results if r.success]
+    failed_results = [r for r in query_results if not r.success]
+
+    print(f"Debug Multi-user: Total results: {len(query_results)}, Successful: {len(successful_results)}, Failed: {len(failed_results)}")
+
+    # 1. TPM趨勢圖 (測試二專用)
+    if test_result.tpm_samples:
+        timestamps = [sample['timestamp'].strftime('%H:%M:%S') for sample in test_result.tpm_samples]
+        tpm_values = [sample['tokens_per_minute'] for sample in test_result.tpm_samples]
+
+        fig_tpm = go.Figure()
+        fig_tpm.add_trace(go.Scatter(
+            x=timestamps,
+            y=tpm_values,
+            mode='lines+markers',
+            name='TPM',
+            line=dict(color='#28a745', width=3),
+            marker=dict(size=6)
+        ))
+
+        fig_tpm.update_layout(
+            title='TPM (每分鐘Token數) 趨勢',
+            xaxis_title='時間',
+            yaxis_title='TPM (tokens/分鐘)',
+            template='plotly_white',
+            hovermode='x unified'
+        )
+
+        charts['tpm_timeline'] = plotly.utils.PlotlyJSONEncoder().encode(fig_tpm)
+
+    # 2. 用戶查詢分布圖
+    if successful_results:
+        user_stats = {}
+        for result in successful_results:
+            user_id = result.user_id
+            if user_id not in user_stats:
+                user_stats[user_id] = {'queries': 0, 'tokens': 0, 'avg_time': 0}
+            user_stats[user_id]['queries'] += 1
+            user_stats[user_id]['tokens'] += result.tokens_count
+
+        # 計算平均響應時間
+        for user_id in user_stats:
+            user_results = [r for r in successful_results if r.user_id == user_id]
+            if user_results:
+                user_stats[user_id]['avg_time'] = sum(r.response_time for r in user_results) / len(user_results)
+
+        users = [f'用戶 {uid}' for uid in user_stats.keys()]
+        queries = [stats['queries'] for stats in user_stats.values()]
+        tokens = [stats['tokens'] for stats in user_stats.values()]
+
+        fig_users = go.Figure()
+
+        # 查詢數量柱狀圖
+        fig_users.add_trace(go.Bar(
+            x=users,
+            y=queries,
+            name='查詢數量',
+            marker_color='rgba(55, 128, 191, 0.8)',
+            offsetgroup=1
+        ))
+
+        # Token數量柱狀圖
+        fig_users.add_trace(go.Bar(
+            x=users,
+            y=tokens,
+            name='Token數量',
+            marker_color='rgba(255, 153, 51, 0.8)',
+            offsetgroup=2
+        ))
+
+        fig_users.update_layout(
+            title='各用戶查詢和Token統計',
+            xaxis_title='用戶',
+            yaxis_title='數量',
+            template='plotly_white',
+            barmode='group',
+            bargap=0.15,
+            bargroupgap=0.1
+        )
+
+        charts['user_distribution'] = plotly.utils.PlotlyJSONEncoder().encode(fig_users)
+
+    # 3. 響應時間vs Token數量散點圖
+    if successful_results:
+        response_times = [r.response_time for r in successful_results]
+        token_counts = [r.tokens_count for r in successful_results]
+        user_colors = [r.user_id for r in successful_results]
+
+        fig_scatter = go.Figure()
+        fig_scatter.add_trace(go.Scatter(
+            x=response_times,
+            y=token_counts,
+            mode='markers',
+            marker=dict(
+                size=8,
+                color=user_colors,
+                colorscale='viridis',
+                showscale=True,
+                colorbar=dict(title="用戶ID")
+            ),
+            text=[f'用戶 {r.user_id}' for r in successful_results],
+            hovertemplate='<b>%{text}</b><br>響應時間: %{x:.2f}s<br>Token數: %{y}<extra></extra>'
+        ))
+
+        fig_scatter.update_layout(
+            title='響應時間 vs Token數量',
+            xaxis_title='響應時間 (秒)',
+            yaxis_title='Token數量',
+            template='plotly_white'
+        )
+
+        charts['response_vs_tokens'] = plotly.utils.PlotlyJSONEncoder().encode(fig_scatter)
+
+    # 4. 多用戶成功率比較
+    if query_results:
+        user_success_stats = {}
+        for result in query_results:
+            user_id = result.user_id
+            if user_id not in user_success_stats:
+                user_success_stats[user_id] = {'total': 0, 'success': 0}
+            user_success_stats[user_id]['total'] += 1
+            if result.success:
+                user_success_stats[user_id]['success'] += 1
+
+        users = [f'用戶 {uid}' for uid in user_success_stats.keys()]
+        success_rates = [(stats['success'] / stats['total']) * 100 for stats in user_success_stats.values()]
+
+        fig_success = go.Figure()
+        fig_success.add_trace(go.Bar(
+            x=users,
+            y=success_rates,
+            marker_color=['#28a745' if rate == 100 else '#ffc107' if rate >= 80 else '#dc3545' for rate in success_rates],
+            text=[f'{rate:.1f}%' for rate in success_rates],
+            textposition='auto'
+        ))
+
+        fig_success.update_layout(
+            title='各用戶查詢成功率',
+            xaxis_title='用戶',
+            yaxis_title='成功率 (%)',
+            yaxis=dict(range=[0, 105]),
+            template='plotly_white'
+        )
+
+        charts['user_success_rate'] = plotly.utils.PlotlyJSONEncoder().encode(fig_success)
 
     return charts
 
