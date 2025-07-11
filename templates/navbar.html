@@ -1,0 +1,244 @@
+<!-- 導覽列組件 -->
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary sticky-top">
+    <div class="container-fluid">
+        <!-- 品牌標誌 -->
+        <a class="navbar-brand" href="{{ url_for('index') }}">
+            <i class="bi bi-cpu"></i>
+            <strong>Ollama 壓力測試工具</strong>
+        </a>
+
+        <!-- 手機版切換按鈕 -->
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" 
+                data-bs-target="#navbarNav" aria-controls="navbarNav" 
+                aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+
+        <!-- 導覽選單 -->
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav me-auto">
+                <!-- 主頁 -->
+                <li class="nav-item">
+                    <a class="nav-link {{ 'active' if request.endpoint == 'index' else '' }}" 
+                       href="{{ url_for('index') }}">
+                        <i class="bi bi-house"></i>
+                        主頁
+                    </a>
+                </li>
+                
+                <!-- 歷史記錄 -->
+                <li class="nav-item">
+                    <a class="nav-link {{ 'active' if request.endpoint == 'history' else '' }}" 
+                       href="{{ url_for('history') }}">
+                        <i class="bi bi-clock-history"></i>
+                        歷史記錄
+                    </a>
+                </li>
+            </ul>
+
+            <!-- 右側資訊 -->
+            <ul class="navbar-nav">
+                <!-- 系統狀態 -->
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="#" id="systemDropdown" 
+                       role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-info-circle"></i>
+                        系統狀態
+                    </a>
+                    <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="systemDropdown">
+                        <li>
+                            <a class="dropdown-item" href="#" onclick="window.location.reload()">
+                                <i class="bi bi-arrow-clockwise"></i>
+                                重新整理硬體資訊
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item" href="#" onclick="window.location.reload()">
+                                <i class="bi bi-download"></i>
+                                重新整理模型列表
+                            </a>
+                        </li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li>
+                            <span class="dropdown-item-text">
+                                <small class="text-muted">
+                                    <i class="bi bi-server"></i>
+                                    Ollama 服務狀態: <span id="ollama-status" class="text-success">連線中</span>
+                                </small>
+                            </span>
+                        </li>
+                    </ul>
+                </li>
+
+                <!-- 說明文件 -->
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="#" id="helpDropdown" 
+                       role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-question-circle"></i>
+                        說明
+                    </a>
+                    <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="helpDropdown">
+                        <li>
+                            <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#helpModal">
+                                <i class="bi bi-book"></i>
+                                使用說明
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#aboutModal">
+                                <i class="bi bi-info-square"></i>
+                                關於
+                            </a>
+                        </li>
+                    </ul>
+                </li>
+            </ul>
+        </div>
+    </div>
+</nav>
+
+<!-- 使用說明模態框 -->
+<div class="modal fade" id="helpModal" tabindex="-1" aria-labelledby="helpModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="helpModalLabel">
+                    <i class="bi bi-book"></i>
+                    使用說明
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-12">
+                        <h6><i class="bi bi-speedometer2"></i> 測試一 - 基礎壓力測試</h6>
+                        <ul>
+                            <li>測試單一模型在指定並發數下的回應時間和穩定性</li>
+                            <li>適合評估模型的基本性能指標</li>
+                            <li>可設定並發請求數、總請求數和測試提示詞</li>
+                        </ul>
+                        
+                        <h6><i class="bi bi-people"></i> 測試二 - 多用戶並發測試</h6>
+                        <ul>
+                            <li>模擬多個用戶同時使用不同提示詞查詢同一模型</li>
+                            <li>測試TPM (每分鐘Token數) 性能</li>
+                            <li>支援內建隨機提示詞或自定義提示詞</li>
+                            <li>可監控每個用戶的查詢統計和成功率</li>
+                        </ul>
+                        
+                        <h6><i class="bi bi-clock-history"></i> 歷史記錄</h6>
+                        <ul>
+                            <li>查看所有歷史測試記錄</li>
+                            <li>可按測試類型、模型名稱篩選</li>
+                            <li>選擇記錄後可重新繪製原有圖表</li>
+                            <li>支援刪除不需要的測試記錄</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 關於模態框 -->
+<div class="modal fade" id="aboutModal" tabindex="-1" aria-labelledby="aboutModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="aboutModalLabel">
+                    <i class="bi bi-info-square"></i>
+                    關於
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="text-center mb-3">
+                    <i class="bi bi-cpu display-4 text-primary"></i>
+                    <h4 class="mt-2">Ollama 壓力測試工具</h4>
+                    <p class="text-muted">版本 2.0</p>
+                </div>
+                
+                <div class="row">
+                    <div class="col-12">
+                        <h6>功能特色</h6>
+                        <ul class="list-unstyled">
+                            <li><i class="bi bi-check-circle text-success"></i> 基礎壓力測試</li>
+                            <li><i class="bi bi-check-circle text-success"></i> 多用戶並發測試</li>
+                            <li><i class="bi bi-check-circle text-success"></i> 即時硬體監控</li>
+                            <li><i class="bi bi-check-circle text-success"></i> 互動式圖表分析</li>
+                            <li><i class="bi bi-check-circle text-success"></i> 歷史記錄管理</li>
+                            <li><i class="bi bi-check-circle text-success"></i> TPM 性能監控</li>
+                        </ul>
+                        
+                        <h6>技術架構</h6>
+                        <ul class="list-unstyled">
+                            <li><i class="bi bi-gear"></i> Flask + Bootstrap 5</li>
+                            <li><i class="bi bi-graph-up"></i> Plotly.js 圖表</li>
+                            <li><i class="bi bi-database"></i> SQLite 資料庫</li>
+                            <li><i class="bi bi-cpu"></i> 多線程並發處理</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* 導覽列樣式優化 */
+.navbar-brand {
+    font-weight: 600;
+    font-size: 1.25rem;
+}
+
+.navbar-nav .nav-link {
+    font-weight: 500;
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    margin: 0 0.25rem;
+    transition: all 0.3s ease;
+}
+
+.navbar-nav .nav-link:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.navbar-nav .nav-link.active {
+    background-color: rgba(255, 255, 255, 0.2);
+    font-weight: 600;
+}
+
+.dropdown-menu {
+    border: none;
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+    border-radius: 0.5rem;
+}
+
+.dropdown-item {
+    padding: 0.5rem 1rem;
+    transition: all 0.2s ease;
+}
+
+.dropdown-item:hover {
+    background-color: #f8f9fa;
+    transform: translateX(2px);
+}
+
+.dropdown-item i {
+    width: 1.2rem;
+    margin-right: 0.5rem;
+}
+
+/* 響應式調整 */
+@media (max-width: 991.98px) {
+    .navbar-nav .nav-link {
+        margin: 0.25rem 0;
+    }
+}
+</style>

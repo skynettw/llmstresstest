@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>歷史記錄 - Ollama 壓力測試工具</title>
+    <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+    
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <!-- Plotly.js -->
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    
+    <style>
+        .history-card {
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border: 2px solid transparent;
+        }
+        
+        .history-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            border-color: #0d6efd;
+        }
+        
+        .history-card.selected {
+            border-color: #0d6efd;
+            background-color: #f8f9ff;
+        }
+        
+        .test-type-badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+        }
+        
+        .chart-container {
+            min-height: 400px;
+            background-color: #fff;
+            border-radius: 0.375rem;
+            border: 1px solid #dee2e6;
+        }
+        
+        .chart-loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 400px;
+            color: #6c757d;
+        }
+        
+        .filter-section {
+            background-color: #f8f9fa;
+            border-radius: 0.5rem;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        
+        .stats-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 1rem;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: #6c757d;
+        }
+        
+        .empty-state i {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+        
+        .pagination-container {
+            display: flex;
+            justify-content: center;
+            margin-top: 2rem;
+        }
+        
+        .delete-btn {
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .history-card:hover .delete-btn {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <!-- 導覽列 -->
+    {% include 'navbar.html' %}
+    
+    <div class="container-fluid p-4">
+        <!-- 頁面標題 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h1 class="display-5 mb-3">
+                    <i class="bi bi-clock-history"></i> 測試歷史記錄
+                </h1>
+                <p class="lead text-muted">
+                    查看和管理所有歷史測試記錄，選擇記錄可重新繪製圖表
+                </p>
+            </div>
+        </div>
+
+        <!-- 統計資訊 -->
+        <div class="row mb-4">
+            <div class="col-md-3 mb-3">
+                <div class="card stats-card h-100">
+                    <div class="card-body text-center">
+                        <i class="bi bi-file-earmark-text display-4 mb-2"></i>
+                        <h3 class="mb-1" id="total-records">{{ statistics.total_records or 0 }}</h3>
+                        <small>總記錄數</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card bg-primary text-white h-100">
+                    <div class="card-body text-center">
+                        <i class="bi bi-speedometer2 display-4 mb-2"></i>
+                        <h3 class="mb-1" id="test1-count">{{ statistics.type_statistics.get('1', 0) }}</h3>
+                        <small>基礎測試</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card bg-success text-white h-100">
+                    <div class="card-body text-center">
+                        <i class="bi bi-people display-4 mb-2"></i>
+                        <h3 class="mb-1" id="test2-count">{{ statistics.type_statistics.get('2', 0) }}</h3>
+                        <small>多用戶測試</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card bg-info text-white h-100">
+                    <div class="card-body text-center">
+                        <i class="bi bi-calendar-event display-4 mb-2"></i>
+                        <div class="h6 mb-1" id="latest-test">
+                            {% if statistics.latest_test_time %}
+                                {{ statistics.latest_test_time[:10] }}
+                            {% else %}
+                                無記錄
+                            {% endif %}
+                        </div>
+                        <small>最新測試</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 篩選區域 -->
+        <div class="filter-section">
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <label for="filter-type" class="form-label">
+                        <i class="bi bi-funnel"></i> 測試類型
+                    </label>
+                    <select class="form-select" id="filter-type">
+                        <option value="">全部類型</option>
+                        <option value="1">基礎壓力測試</option>
+                        <option value="2">多用戶並發測試</option>
+                    </select>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label for="filter-model" class="form-label">
+                        <i class="bi bi-cpu"></i> 模型名稱
+                    </label>
+                    <input type="text" class="form-control" id="filter-model" 
+                           placeholder="輸入模型名稱篩選...">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">&nbsp;</label>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-primary" onclick="applyFilters()">
+                            <i class="bi bi-search"></i> 篩選
+                        </button>
+                        <button class="btn btn-outline-secondary" onclick="clearFilters()">
+                            <i class="bi bi-x-circle"></i> 清除
+                        </button>
+                        <button class="btn btn-outline-info" onclick="refreshHistory()">
+                            <i class="bi bi-arrow-clockwise"></i> 重新整理
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 歷史記錄列表 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">
+                            <i class="bi bi-list-ul"></i> 測試記錄
+                        </h5>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteSelectedRecords()" 
+                                    id="delete-selected-btn" disabled>
+                                <i class="bi bi-trash"></i> 刪除選中
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- 記錄列表容器 -->
+                        <div id="history-list">
+                            <!-- 載入中狀態 -->
+                            <div class="text-center py-4" id="loading-state">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">載入中...</span>
+                                </div>
+                                <p class="mt-2 text-muted">載入歷史記錄中...</p>
+                            </div>
+                        </div>
+                        
+                        <!-- 分頁 -->
+                        <div class="pagination-container" id="pagination-container" style="display: none;">
+                            <!-- 分頁控制項將由JavaScript生成 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 圖表顯示區域 -->
+        <div class="row" id="charts-section" style="display: none;">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <i class="bi bi-bar-chart"></i> 測試結果圖表
+                            <span class="badge bg-primary ms-2" id="selected-test-name"></span>
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="charts-container">
+                            <!-- 圖表將由JavaScript動態生成 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 刪除確認模態框 -->
+    <div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="deleteModalLabel">
+                        <i class="bi bi-exclamation-triangle text-warning"></i>
+                        確認刪除
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>您確定要刪除選中的測試記錄嗎？此操作無法復原。</p>
+                    <div id="delete-list"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-danger" onclick="confirmDelete()">
+                        <i class="bi bi-trash"></i> 確認刪除
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap 5 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ url_for('static', filename='js/history_charts.js') }}"></script>
+
+    <script>
+        // 全局變量
+        let currentPage = 1;
+        let totalPages = 1;
+        let selectedRecords = new Set();
+        let currentFilters = {};
+
+        // 頁面載入完成後初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            loadHistoryRecords();
+        });
+
+        // 載入歷史記錄
+        function loadHistoryRecords(page = 1) {
+            currentPage = page;
+            const loadingState = document.getElementById('loading-state');
+            const historyList = document.getElementById('history-list');
+
+            // 顯示載入狀態
+            loadingState.style.display = 'block';
+
+            // 構建查詢參數
+            const params = new URLSearchParams({
+                page: page,
+                limit: 12,
+                ...currentFilters
+            });
+
+            fetch(`/api/history?${params}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        renderHistoryRecords(data.records);
+                        updatePagination(data.pagination);
+                        updateStatistics(data.statistics);
+                    } else {
+                        showError('載入歷史記錄失敗: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading history:', error);
+                    showError('載入歷史記錄時發生錯誤');
+                })
+                .finally(() => {
+                    loadingState.style.display = 'none';
+                });
+        }
+
+        // 渲染歷史記錄
+        function renderHistoryRecords(records) {
+            const historyList = document.getElementById('history-list');
+
+            if (records.length === 0) {
+                historyList.innerHTML = `
+                    <div class="empty-state">
+                        <i class="bi bi-inbox"></i>
+                        <h5>沒有找到測試記錄</h5>
+                        <p class="text-muted">請調整篩選條件或開始新的測試</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const recordsHtml = records.map(record => `
+                <div class="col-md-6 col-lg-4 mb-3">
+                    <div class="card history-card" onclick="selectRecord('${record.test_id}')"
+                         data-test-id="${record.test_id}">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <h6 class="card-title mb-0">${record.test_name}</h6>
+                                <div class="d-flex gap-1">
+                                    <span class="badge test-type-badge ${record.test_type === 1 ? 'bg-primary' : 'bg-success'}">
+                                        ${record.test_type === 1 ? '基礎測試' : '多用戶測試'}
+                                    </span>
+                                    <button class="btn btn-sm btn-outline-danger delete-btn"
+                                            onclick="event.stopPropagation(); deleteRecord('${record.test_id}')"
+                                            title="刪除記錄">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="row text-muted small">
+                                <div class="col-12 mb-1">
+                                    <i class="bi bi-cpu"></i> ${record.model_name}
+                                </div>
+                                <div class="col-6">
+                                    <i class="bi bi-clock"></i> ${formatDateTime(record.test_time)}
+                                </div>
+                                <div class="col-6">
+                                    <i class="bi bi-stopwatch"></i> ${formatDuration(record.duration_seconds)}
+                                </div>
+                                <div class="col-6">
+                                    <i class="bi bi-check-circle text-success"></i> ${record.successful_requests}
+                                </div>
+                                <div class="col-6">
+                                    <i class="bi bi-x-circle text-danger"></i> ${record.failed_requests}
+                                </div>
+                            </div>
+
+                            <div class="mt-2">
+                                <div class="progress" style="height: 4px;">
+                                    <div class="progress-bar bg-success" role="progressbar"
+                                         style="width: ${(record.successful_requests / record.total_requests * 100)}%"></div>
+                                </div>
+                                <small class="text-muted">
+                                    成功率: ${(record.successful_requests / record.total_requests * 100).toFixed(1)}%
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            historyList.innerHTML = `<div class="row">${recordsHtml}</div>`;
+        }
+
+        // 選擇記錄
+        function selectRecord(testId) {
+            // 移除其他選中狀態
+            document.querySelectorAll('.history-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+
+            // 添加選中狀態
+            const selectedCard = document.querySelector(`[data-test-id="${testId}"]`);
+            if (selectedCard) {
+                selectedCard.classList.add('selected');
+            }
+
+            // 載入並顯示圖表
+            loadTestCharts(testId);
+        }
+
+        // 載入測試圖表
+        function loadTestCharts(testId) {
+            const chartsSection = document.getElementById('charts-section');
+            const chartsContainer = document.getElementById('charts-container');
+            const selectedTestName = document.getElementById('selected-test-name');
+
+            // 顯示載入狀態
+            chartsContainer.innerHTML = `
+                <div class="chart-loading">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">載入圖表中...</span>
+                    </div>
+                    <span class="ms-2">載入圖表中...</span>
+                </div>
+            `;
+            chartsSection.style.display = 'block';
+
+            // 獲取測試詳細資料
+            fetch(`/api/history/${testId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        selectedTestName.textContent = data.record.test_name;
+                        renderTestCharts(data.record);
+                    } else {
+                        showError('載入測試詳細資料失敗: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading test details:', error);
+                    showError('載入測試詳細資料時發生錯誤');
+                });
+        }
+
+        // 渲染測試圖表
+        function renderTestCharts(record) {
+            const chartsContainer = document.getElementById('charts-container');
+
+            if (record.test_type === 1) {
+                // 基礎壓力測試圖表
+                renderBasicTestCharts(record, chartsContainer);
+            } else {
+                // 多用戶並發測試圖表
+                renderMultiUserTestCharts(record, chartsContainer);
+            }
+        }
+
+        // 渲染基礎測試圖表
+        function renderBasicTestCharts(record, container) {
+            const results = record.test_results.results || [];
+            const statistics = record.test_statistics || {};
+
+            container.innerHTML = `
+                <div class="row">
+                    <div class="col-lg-6 mb-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="card-title mb-0">回應時間分布</h6>
+                            </div>
+                            <div class="card-body">
+                                <div id="response-time-histogram" style="height: 400px;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6 mb-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="card-title mb-0">請求成功率</h6>
+                            </div>
+                            <div class="card-body">
+                                <div id="success-rate-pie" style="height: 400px;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-12 mb-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="card-title mb-0">回應時間趨勢</h6>
+                            </div>
+                            <div class="card-body">
+                                <div id="response-time-timeline" style="height: 400px;"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // 生成圖表
+            generateBasicTestCharts(results, statistics);
+        }
+
+        // 渲染多用戶測試圖表
+        function renderMultiUserTestCharts(record, container) {
+            const testResults = record.test_results || {};
+            const queryResults = testResults.query_results || [];
+            const tpmSamples = testResults.tpm_samples || [];
+
+            container.innerHTML = `
+                <div class="row">
+                    <div class="col-12 mb-4">
+                        <div class="card">
+                            <div class="card-header bg-success text-white">
+                                <h6 class="card-title mb-0">
+                                    <i class="bi bi-graph-up"></i> TPM (每分鐘Token數) 趨勢
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <div id="tpm-timeline" style="height: 400px;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6 mb-4">
+                        <div class="card">
+                            <div class="card-header bg-info text-white">
+                                <h6 class="card-title mb-0">
+                                    <i class="bi bi-people"></i> 各用戶查詢統計
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <div id="user-distribution" style="height: 400px;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6 mb-4">
+                        <div class="card">
+                            <div class="card-header bg-warning text-dark">
+                                <h6 class="card-title mb-0">
+                                    <i class="bi bi-check-circle"></i> 各用戶成功率
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <div id="user-success-rate" style="height: 400px;"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // 生成圖表
+            generateMultiUserTestCharts(queryResults, tpmSamples);
+        }
+
+        // 工具函數
+        function formatDateTime(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleString('zh-TW', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        function formatDuration(seconds) {
+            if (seconds < 60) {
+                return `${seconds.toFixed(1)}秒`;
+            } else {
+                const minutes = Math.floor(seconds / 60);
+                const remainingSeconds = seconds % 60;
+                return `${minutes}分${remainingSeconds.toFixed(0)}秒`;
+            }
+        }
+
+        function showError(message) {
+            // 簡單的錯誤顯示，可以後續改為更好的UI
+            alert(message);
+        }
+
+        // 篩選功能
+        function applyFilters() {
+            const filterType = document.getElementById('filter-type').value;
+            const filterModel = document.getElementById('filter-model').value;
+
+            currentFilters = {};
+            if (filterType) currentFilters.test_type = filterType;
+            if (filterModel) currentFilters.model_name = filterModel;
+
+            loadHistoryRecords(1);
+        }
+
+        function clearFilters() {
+            document.getElementById('filter-type').value = '';
+            document.getElementById('filter-model').value = '';
+            currentFilters = {};
+            loadHistoryRecords(1);
+        }
+
+        function refreshHistory() {
+            loadHistoryRecords(currentPage);
+        }
+
+        // 刪除功能
+        function deleteRecord(testId) {
+            if (confirm('確定要刪除這個測試記錄嗎？')) {
+                fetch(`/api/history/${testId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        loadHistoryRecords(currentPage);
+                        // 如果刪除的是當前選中的記錄，隱藏圖表
+                        const selectedCard = document.querySelector('.history-card.selected');
+                        if (selectedCard && selectedCard.dataset.testId === testId) {
+                            document.getElementById('charts-section').style.display = 'none';
+                        }
+                    } else {
+                        showError('刪除記錄失敗: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error deleting record:', error);
+                    showError('刪除記錄時發生錯誤');
+                });
+            }
+        }
+
+        // 更新統計資訊
+        function updateStatistics(statistics) {
+            if (statistics) {
+                document.getElementById('total-records').textContent = statistics.total_records || 0;
+                document.getElementById('test1-count').textContent = statistics.type_statistics['1'] || 0;
+                document.getElementById('test2-count').textContent = statistics.type_statistics['2'] || 0;
+
+                const latestTest = document.getElementById('latest-test');
+                if (statistics.latest_test_time) {
+                    latestTest.textContent = statistics.latest_test_time.substring(0, 10);
+                } else {
+                    latestTest.textContent = '無記錄';
+                }
+            }
+        }
+
+        // 更新分頁
+        function updatePagination(pagination) {
+            // 分頁功能的實現將在後續添加
+            const paginationContainer = document.getElementById('pagination-container');
+            if (pagination && pagination.total_pages > 1) {
+                // 這裡可以實現分頁控制項
+                paginationContainer.style.display = 'flex';
+            } else {
+                paginationContainer.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>

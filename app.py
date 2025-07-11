@@ -10,6 +10,7 @@ from hardware_info import get_hardware_info
 from ollama_client import OllamaClient
 from stress_test_simple import StressTestManager
 from multi_user_stress_test import MultiUserStressTestManager
+from database import db
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'ollama-stress-test-secret-key'
@@ -24,9 +25,15 @@ def index():
     """首頁 - 顯示硬體資訊和測試表單"""
     hardware_info = get_hardware_info()
     models = ollama_client.get_available_models()
-    return render_template('index.html', 
-                         hardware_info=hardware_info, 
+    return render_template('index.html',
+                         hardware_info=hardware_info,
                          models=models)
+
+@app.route('/history')
+def history():
+    """歷史記錄頁面"""
+    statistics = db.get_statistics()
+    return render_template('history.html', statistics=statistics)
 
 @app.route('/api/hardware')
 def api_hardware():
@@ -494,6 +501,166 @@ def generate_multi_user_test_charts(test_result):
         charts['user_success_rate'] = plotly.utils.PlotlyJSONEncoder().encode(fig_success)
 
     return charts
+
+# ===== 歷史記錄管理 API =====
+
+@app.route('/api/history')
+def api_get_history():
+    """獲取歷史記錄列表"""
+    try:
+        # 獲取查詢參數
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 12))
+        test_type = request.args.get('test_type')
+        model_name = request.args.get('model_name')
+
+        # 計算偏移量
+        offset = (page - 1) * limit
+
+        # 轉換測試類型
+        test_type_int = None
+        if test_type:
+            try:
+                test_type_int = int(test_type)
+            except ValueError:
+                pass
+
+        # 獲取歷史記錄
+        records = db.get_test_history(
+            limit=limit,
+            offset=offset,
+            test_type=test_type_int,
+            model_name=model_name
+        )
+
+        # 獲取統計資訊
+        statistics = db.get_statistics()
+
+        # 計算分頁資訊
+        total_records = statistics.get('total_records', 0)
+        total_pages = (total_records + limit - 1) // limit
+
+        return jsonify({
+            'success': True,
+            'records': records,
+            'pagination': {
+                'current_page': page,
+                'total_pages': total_pages,
+                'total_records': total_records,
+                'limit': limit
+            },
+            'statistics': statistics
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/history/<test_id>')
+def api_get_test_detail(test_id):
+    """獲取特定測試的詳細資料"""
+    try:
+        record = db.get_test_detail(test_id)
+
+        if record:
+            return jsonify({
+                'success': True,
+                'record': record
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Test record not found'
+            }), 404
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/history/<test_id>', methods=['DELETE'])
+def api_delete_test_record(test_id):
+    """刪除測試記錄"""
+    try:
+        success = db.delete_test_record(test_id)
+
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'Test record deleted successfully'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Test record not found'
+            }), 404
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/history/<test_id>/charts')
+def api_get_test_charts(test_id):
+    """獲取測試的圖表數據"""
+    try:
+        record = db.get_test_detail(test_id)
+
+        if not record:
+            return jsonify({
+                'success': False,
+                'error': 'Test record not found'
+            }), 404
+
+        # 根據測試類型生成圖表
+        if record['test_type'] == 1:
+            # 基礎壓力測試
+            results = record['test_results'].get('results', [])
+            statistics = record['test_statistics']
+            charts = generate_test_charts(results, statistics)
+        else:
+            # 多用戶並發測試
+            # 重構測試結果為MultiUserTestResult格式
+            test_results = record['test_results']
+
+            # 創建模擬的測試結果對象
+            class MockTestResult:
+                def __init__(self, data):
+                    self.query_results = []
+                    self.tpm_samples = []
+
+                    # 轉換查詢結果
+                    for result_data in data.get('query_results', []):
+                        result_obj = type('QueryResult', (), {})()
+                        for key, value in result_data.items():
+                            setattr(result_obj, key, value)
+                        self.query_results.append(result_obj)
+
+                    # 轉換TPM樣本
+                    for sample_data in data.get('tpm_samples', []):
+                        sample = {
+                            'timestamp': datetime.fromisoformat(sample_data['timestamp']),
+                            'tokens_per_minute': sample_data['tokens_per_minute']
+                        }
+                        self.tpm_samples.append(sample)
+
+            mock_result = MockTestResult(test_results)
+            charts = generate_multi_user_test_charts(mock_result)
+
+        return jsonify({
+            'success': True,
+            'charts': charts
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 if __name__ == '__main__':
     print("Starting Ollama Stress Test Server (Simple Version)...")

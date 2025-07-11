@@ -14,11 +14,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import statistics
 
 from multi_user_test_config import (
-    MultiUserTestConfig, UserSession, QueryResult, 
+    MultiUserTestConfig, UserSession, QueryResult,
     MultiUserTestResult, COMMON_PROMPTS, assign_prompts_to_users,
     calculate_tpm
 )
 from ollama_client import OllamaClient
+from database import db
+from hardware_info import get_hardware_info
 
 
 class MultiUserStressTestManager:
@@ -153,7 +155,10 @@ class MultiUserStressTestManager:
                 self.active_tests[test_id]['status'] = 'completed'
                 self.active_tests[test_id]['progress'] = 100
                 self.test_results[test_id] = result
-            
+
+                # 保存測試結果到資料庫
+                self._save_multi_user_test_to_database(test_id, config, result)
+
         except Exception as e:
             with self.lock:
                 self.active_tests[test_id]['status'] = 'error'
@@ -413,3 +418,93 @@ class MultiUserStressTestManager:
                 tpm_values = [sample['tokens_per_minute'] for sample in result.tpm_samples]
                 result.average_tpm = sum(tpm_values) / len(tpm_values) if tpm_values else 0.0
                 result.peak_tpm = max(tpm_values) if tpm_values else 0.0
+
+    def _save_multi_user_test_to_database(self, test_id: str, config: MultiUserTestConfig, result: MultiUserTestResult):
+        """保存多用戶測試結果到資料庫"""
+        try:
+            # 獲取當前硬體資訊
+            hardware_info = get_hardware_info()
+
+            # 準備統計資料
+            statistics = {
+                'total_queries': result.total_queries,
+                'successful_queries': result.successful_queries,
+                'failed_queries': result.failed_queries,
+                'total_tokens': result.total_tokens,
+                'average_response_time': result.average_response_time,
+                'min_response_time': result.min_response_time,
+                'max_response_time': result.max_response_time,
+                'average_tpm': result.average_tpm,
+                'peak_tpm': result.peak_tpm,
+                'user_count': config.user_count,
+                'queries_per_user': config.queries_per_user
+            }
+
+            # 準備測試結果資料（用於重繪圖表）
+            test_results_data = {
+                'query_results': [
+                    {
+                        'user_id': r.user_id,
+                        'query_index': r.query_index,
+                        'prompt': r.prompt,
+                        'response': r.response,
+                        'success': r.success,
+                        'response_time': r.response_time,
+                        'tokens_count': r.tokens_count,
+                        'timestamp': r.timestamp.isoformat() if r.timestamp else None,
+                        'error_message': r.error_message
+                    } for r in result.query_results
+                ],
+                'tpm_samples': [
+                    {
+                        'timestamp': sample['timestamp'].isoformat(),
+                        'tokens_per_minute': sample['tokens_per_minute']
+                    } for sample in (result.tpm_samples or [])
+                ],
+                'user_sessions': {
+                    str(user_id): {
+                        'user_id': session.user_id,
+                        'assigned_prompts': session.assigned_prompts,
+                        'completed_queries': session.completed_queries,
+                        'failed_queries': session.failed_queries
+                    } for user_id, session in result.user_sessions.items()
+                }
+            }
+
+            # 準備保存的資料
+            db_data = {
+                'test_id': test_id,
+                'test_name': f"多用戶並發測試_{result.start_time.strftime('%Y%m%d_%H%M%S')}",
+                'test_type': 2,  # 多用戶並發測試
+                'test_time': result.start_time,
+                'model_name': config.model_name,
+                'hardware_info': hardware_info,
+                'test_config': {
+                    'model_name': config.model_name,
+                    'user_count': config.user_count,
+                    'queries_per_user': config.queries_per_user,
+                    'concurrent_limit': config.concurrent_limit,
+                    'delay_between_queries': config.delay_between_queries,
+                    'use_random_prompts': config.use_random_prompts,
+                    'custom_prompts': config.custom_prompts,
+                    'enable_tpm_monitoring': config.enable_tpm_monitoring,
+                    'enable_detailed_logging': config.enable_detailed_logging
+                },
+                'test_results': test_results_data,
+                'test_statistics': statistics,
+                'duration_seconds': (result.end_time - result.start_time).total_seconds() if result.end_time else 0,
+                'total_requests': result.total_queries,
+                'successful_requests': result.successful_queries,
+                'failed_requests': result.failed_queries,
+                'avg_response_time': result.average_response_time
+            }
+
+            # 保存到資料庫
+            success = db.save_test_result(db_data)
+            if success:
+                print(f"Multi-user test result saved to database: {test_id}")
+            else:
+                print(f"Failed to save multi-user test result to database: {test_id}")
+
+        except Exception as e:
+            print(f"Error saving multi-user test result to database: {e}")

@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
 from ollama_client import OllamaClient
 import statistics
+from database import db
+from hardware_info import get_hardware_info
 
 class StressTestManager:
     def __init__(self):
@@ -81,7 +83,15 @@ class StressTestManager:
                     test_data = self.active_tests.pop(test_id)
                     test_data['end_time'] = datetime.now()
                     test_data['duration'] = (test_data['end_time'] - test_data['start_time']).total_seconds()
+
+                    # 確保狀態為完成（如果沒有錯誤的話）
+                    if test_data.get('status') != 'error':
+                        test_data['status'] = 'completed'
+
                     self.test_results[test_id] = test_data
+
+                    # 保存測試結果到資料庫
+                    self._save_test_to_database(test_id, test_data)
     
     def _execute_test(self, test_id: str, config: Dict):
         """執行具體的測試邏輯"""
@@ -219,6 +229,57 @@ class StressTestManager:
             }
         
         return stats
+
+    def _save_test_to_database(self, test_id: str, test_data: Dict):
+        """保存測試結果到資料庫"""
+        try:
+            # 只有在測試完成時才保存
+            if test_data.get('status') != 'completed':
+                return
+
+            # 準備資料庫資料
+            config = test_data.get('config', {})
+            statistics = test_data.get('statistics', {})
+            results = test_data.get('final_results', [])
+
+            # 獲取當前硬體資訊
+            hardware_info = get_hardware_info()
+
+            # 準備保存的資料
+            db_data = {
+                'test_id': test_id,
+                'test_name': f"基礎壓力測試_{test_data['start_time'].strftime('%Y%m%d_%H%M%S')}",
+                'test_type': 1,  # 基礎壓力測試
+                'test_time': test_data['start_time'],
+                'model_name': config.get('model', ''),
+                'hardware_info': hardware_info,
+                'test_config': {
+                    'model': config.get('model', ''),
+                    'concurrent_requests': config.get('concurrent_requests', 0),
+                    'total_requests': config.get('total_requests', 0),
+                    'prompt': config.get('prompt', '')
+                },
+                'test_results': {
+                    'results': results,
+                    'raw_data': results  # 保存原始結果用於重繪圖表
+                },
+                'test_statistics': statistics,
+                'duration_seconds': test_data.get('duration', 0),
+                'total_requests': statistics.get('total_requests', 0),
+                'successful_requests': statistics.get('successful_requests', 0),
+                'failed_requests': statistics.get('failed_requests', 0),
+                'avg_response_time': statistics.get('response_time_stats', {}).get('mean', 0)
+            }
+
+            # 保存到資料庫
+            success = db.save_test_result(db_data)
+            if success:
+                print(f"Test result saved to database: {test_id}")
+            else:
+                print(f"Failed to save test result to database: {test_id}")
+
+        except Exception as e:
+            print(f"Error saving test result to database: {e}")
 
 if __name__ == "__main__":
     # 測試壓力測試管理器
