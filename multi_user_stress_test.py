@@ -163,6 +163,14 @@ class MultiUserStressTestManager:
             with self.lock:
                 self.active_tests[test_id]['status'] = 'error'
                 self.active_tests[test_id]['error'] = str(e)
+
+                # 即使發生錯誤，也嘗試保存部分結果（如果有的話）
+                if result.query_results:
+                    try:
+                        self._calculate_final_statistics(result)
+                        self._save_multi_user_test_to_database(test_id, config, result)
+                    except Exception as save_error:
+                        print(f"Failed to save partial results: {save_error}")
     
     def _assign_custom_prompts(self, config: MultiUserTestConfig) -> Dict[int, List[str]]:
         """為用戶分配自定義提示詞"""
@@ -445,9 +453,8 @@ class MultiUserStressTestManager:
                 'query_results': [
                     {
                         'user_id': r.user_id,
-                        'query_index': r.query_index,
                         'prompt': r.prompt,
-                        'response': r.response,
+                        'response': r.response_text,  # 修正屬性名稱
                         'success': r.success,
                         'response_time': r.response_time,
                         'tokens_count': r.tokens_count,
@@ -477,10 +484,10 @@ class MultiUserStressTestManager:
                 'test_name': f"多用戶並發測試_{result.start_time.strftime('%Y%m%d_%H%M%S')}",
                 'test_type': 2,  # 多用戶並發測試
                 'test_time': result.start_time,
-                'model_name': config.model_name,
+                'model_name': config.model,  # 修正屬性名稱
                 'hardware_info': hardware_info,
                 'test_config': {
-                    'model_name': config.model_name,
+                    'model_name': config.model,  # 修正屬性名稱
                     'user_count': config.user_count,
                     'queries_per_user': config.queries_per_user,
                     'concurrent_limit': config.concurrent_limit,
