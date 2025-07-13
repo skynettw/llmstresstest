@@ -27,6 +27,11 @@
         }
         
         .history-card.selected {
+            border-color: #dc3545;
+            background-color: #fff5f5;
+        }
+
+        .history-card.chart-selected {
             border-color: #0d6efd;
             background-color: #f8f9ff;
         }
@@ -89,6 +94,43 @@
         
         .history-card:hover .delete-btn {
             opacity: 1;
+        }
+
+        /* 測試條件和硬體條件樣式 */
+        #test-conditions-section .card {
+            border: 1px solid #e9ecef;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        #test-conditions-section .card-header {
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        #test-conditions-section .card-header h6 {
+            color: #495057;
+            font-weight: 600;
+        }
+
+        #test-conditions-section .card-body {
+            background-color: #fdfdfe;
+        }
+
+        #test-conditions-section strong {
+            color: #495057;
+            font-weight: 600;
+        }
+
+        #test-conditions-section .text-muted {
+            font-size: 0.9rem;
+        }
+
+        /* 響應式調整 */
+        @media (max-width: 768px) {
+            #test-conditions-section .col-md-3,
+            #test-conditions-section .col-md-6 {
+                margin-bottom: 0.5rem;
+            }
         }
     </style>
 </head>
@@ -239,6 +281,45 @@
                         </h5>
                     </div>
                     <div class="card-body">
+                        <!-- 測試條件和硬體條件顯示區域 -->
+                        <div id="test-conditions-section" class="mb-4">
+                            <!-- 測試條件 -->
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <div class="card bg-light">
+                                        <div class="card-header py-2">
+                                            <h6 class="mb-0">
+                                                <i class="bi bi-gear"></i> 測試條件
+                                            </h6>
+                                        </div>
+                                        <div class="card-body py-2">
+                                            <div id="test-config-display" class="row">
+                                                <!-- 測試條件將由JavaScript動態生成 -->
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 硬體條件 -->
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <div class="card bg-light">
+                                        <div class="card-header py-2">
+                                            <h6 class="mb-0">
+                                                <i class="bi bi-cpu"></i> 硬體條件
+                                            </h6>
+                                        </div>
+                                        <div class="card-body py-2">
+                                            <div id="hardware-info-display" class="row">
+                                                <!-- 硬體條件將由JavaScript動態生成 -->
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div id="charts-container">
                             <!-- 圖表將由JavaScript動態生成 -->
                         </div>
@@ -296,7 +377,9 @@
             const historyList = document.getElementById('history-list');
 
             // 顯示載入狀態
-            loadingState.style.display = 'block';
+            if (loadingState) {
+                loadingState.style.display = 'block';
+            }
 
             // 構建查詢參數
             const params = new URLSearchParams({
@@ -321,7 +404,9 @@
                     showError('載入歷史記錄時發生錯誤');
                 })
                 .finally(() => {
-                    loadingState.style.display = 'none';
+                    if (loadingState) {
+                        loadingState.style.display = 'none';
+                    }
                 });
         }
 
@@ -346,7 +431,12 @@
                          data-test-id="${record.test_id}">
                         <div class="card-body">
                             <div class="d-flex justify-content-between align-items-start mb-2">
-                                <h6 class="card-title mb-0">${record.test_name}</h6>
+                                <div class="d-flex align-items-center">
+                                    <input type="checkbox" class="form-check-input me-2 record-checkbox"
+                                           data-test-id="${record.test_id}"
+                                           onclick="event.stopPropagation(); toggleRecordSelection('${record.test_id}')">
+                                    <h6 class="card-title mb-0">${record.test_name}</h6>
+                                </div>
                                 <div class="d-flex gap-1">
                                     <span class="badge test-type-badge ${record.test_type === 1 ? 'bg-primary' : 'bg-success'}">
                                         ${record.test_type === 1 ? '基礎測試' : '多用戶測試'}
@@ -392,23 +482,59 @@
             `).join('');
 
             historyList.innerHTML = `<div class="row">${recordsHtml}</div>`;
+
+            // 重置刪除按鈕狀態
+            updateDeleteButtonState();
         }
 
-        // 選擇記錄
+        // 選擇記錄（用於查看圖表）
         function selectRecord(testId) {
-            // 移除其他選中狀態
+            // 移除其他圖表選中狀態
             document.querySelectorAll('.history-card').forEach(card => {
-                card.classList.remove('selected');
+                card.classList.remove('chart-selected');
             });
 
-            // 添加選中狀態
+            // 添加圖表選中狀態
             const selectedCard = document.querySelector(`[data-test-id="${testId}"]`);
             if (selectedCard) {
-                selectedCard.classList.add('selected');
+                selectedCard.classList.add('chart-selected');
             }
 
             // 載入並顯示圖表
             loadTestCharts(testId);
+        }
+
+        // 切換記錄選擇（用於批量操作）
+        function toggleRecordSelection(testId) {
+            const checkbox = document.querySelector(`.record-checkbox[data-test-id="${testId}"]`);
+            const card = document.querySelector(`[data-test-id="${testId}"]`);
+
+            if (checkbox && card) {
+                if (checkbox.checked) {
+                    card.classList.add('selected');
+                } else {
+                    card.classList.remove('selected');
+                }
+
+                // 更新批量刪除按鈕狀態
+                updateDeleteButtonState();
+            }
+        }
+
+        // 更新刪除按鈕狀態
+        function updateDeleteButtonState() {
+            const selectedCheckboxes = document.querySelectorAll('.record-checkbox:checked');
+            const deleteButton = document.getElementById('delete-selected-btn');
+
+            if (deleteButton) {
+                if (selectedCheckboxes.length > 0) {
+                    deleteButton.disabled = false;
+                    deleteButton.textContent = `刪除選中 (${selectedCheckboxes.length})`;
+                } else {
+                    deleteButton.disabled = true;
+                    deleteButton.innerHTML = '<i class="bi bi-trash"></i> 刪除選中';
+                }
+            }
         }
 
         // 載入測試圖表
@@ -426,7 +552,9 @@
                     <span class="ms-2">載入圖表中...</span>
                 </div>
             `;
-            chartsSection.style.display = 'block';
+            if (chartsSection) {
+                chartsSection.style.display = 'block';
+            }
 
             // 獲取測試詳細資料
             fetch(`/api/history/${testId}`)
@@ -445,9 +573,134 @@
                 });
         }
 
+        // 渲染測試條件
+        function renderTestConditions(record) {
+            const testConfigDisplay = document.getElementById('test-config-display');
+            const testConfig = record.test_config;
+
+            let configHtml = '';
+
+            if (record.test_type === 1) {
+                // 基礎壓力測試條件
+                configHtml = `
+                    <div class="col-md-3">
+                        <strong>模型:</strong> ${testConfig.model || 'N/A'}
+                    </div>
+                    <div class="col-md-3">
+                        <strong>並發請求數:</strong> ${testConfig.concurrent_requests || 'N/A'}
+                    </div>
+                    <div class="col-md-3">
+                        <strong>總請求數:</strong> ${testConfig.total_requests || 'N/A'}
+                    </div>
+                    <div class="col-md-3">
+                        <strong>測試時間:</strong> ${new Date(record.test_time).toLocaleString('zh-TW')}
+                    </div>
+                    <div class="col-12 mt-2">
+                        <strong>測試提示:</strong>
+                        <span class="text-muted">${testConfig.prompt ? (testConfig.prompt.length > 100 ? testConfig.prompt.substring(0, 100) + '...' : testConfig.prompt) : 'N/A'}</span>
+                    </div>
+                `;
+            } else {
+                // 多用戶並發測試條件
+                configHtml = `
+                    <div class="col-md-3">
+                        <strong>模型:</strong> ${testConfig.model_name || testConfig.model || 'N/A'}
+                    </div>
+                    <div class="col-md-3">
+                        <strong>用戶數:</strong> ${testConfig.user_count || 'N/A'}
+                    </div>
+                    <div class="col-md-3">
+                        <strong>每用戶查詢數:</strong> ${testConfig.queries_per_user || 'N/A'}
+                    </div>
+                    <div class="col-md-3">
+                        <strong>並發限制:</strong> ${testConfig.concurrent_limit || 'N/A'}
+                    </div>
+                    <div class="col-md-3 mt-2">
+                        <strong>查詢間隔:</strong> ${testConfig.delay_between_queries || 'N/A'}s
+                    </div>
+                    <div class="col-md-3 mt-2">
+                        <strong>隨機提示:</strong> ${testConfig.use_random_prompts ? '是' : '否'}
+                    </div>
+                    <div class="col-md-3 mt-2">
+                        <strong>TPM監控:</strong> ${testConfig.enable_tpm_monitoring ? '是' : '否'}
+                    </div>
+                    <div class="col-md-3 mt-2">
+                        <strong>測試時間:</strong> ${new Date(record.test_time).toLocaleString('zh-TW')}
+                    </div>
+                `;
+            }
+
+            testConfigDisplay.innerHTML = configHtml;
+        }
+
+        // 渲染硬體條件
+        function renderHardwareInfo(record) {
+            const hardwareInfoDisplay = document.getElementById('hardware-info-display');
+            const hardwareInfo = record.hardware_info;
+
+            let hardwareHtml = '';
+
+            if (hardwareInfo) {
+                // CPU 資訊
+                const cpu = hardwareInfo.cpu || {};
+                const memory = hardwareInfo.memory || {};
+                const gpu = hardwareInfo.gpu || [];
+                const system = hardwareInfo.system || {};
+
+                hardwareHtml = `
+                    <div class="col-md-6">
+                        <strong>CPU:</strong> ${cpu.name || 'N/A'}
+                        (${cpu.cores_physical || 'N/A'}核/${cpu.cores_logical || 'N/A'}線程)
+                    </div>
+                    <div class="col-md-3">
+                        <strong>CPU使用率:</strong> ${cpu.usage_percent ? cpu.usage_percent.toFixed(1) + '%' : 'N/A'}
+                    </div>
+                    <div class="col-md-3">
+                        <strong>CPU頻率:</strong> ${cpu.frequency_current ? (cpu.frequency_current / 1000).toFixed(1) + 'GHz' : 'N/A'}
+                    </div>
+                    <div class="col-md-3 mt-2">
+                        <strong>記憶體總量:</strong> ${memory.total_gb ? memory.total_gb.toFixed(1) + 'GB' : 'N/A'}
+                    </div>
+                    <div class="col-md-3 mt-2">
+                        <strong>記憶體使用:</strong> ${memory.usage_percent ? memory.usage_percent.toFixed(1) + '%' : 'N/A'}
+                    </div>
+                    <div class="col-md-3 mt-2">
+                        <strong>可用記憶體:</strong> ${memory.available_gb ? memory.available_gb.toFixed(1) + 'GB' : 'N/A'}
+                    </div>
+                    <div class="col-md-3 mt-2">
+                        <strong>系統:</strong> ${system.system || 'N/A'} ${system.release || ''}
+                    </div>
+                `;
+
+                // GPU 資訊
+                if (gpu && gpu.length > 0) {
+                    const gpuInfo = gpu[0]; // 顯示第一個GPU
+                    hardwareHtml += `
+                        <div class="col-md-6 mt-2">
+                            <strong>GPU:</strong> ${gpuInfo.name || 'N/A'}
+                        </div>
+                        <div class="col-md-3 mt-2">
+                            <strong>GPU記憶體:</strong> ${gpuInfo.memory_total_mb ? (gpuInfo.memory_total_mb / 1024).toFixed(1) + 'GB' : 'N/A'}
+                        </div>
+                        <div class="col-md-3 mt-2">
+                            <strong>GPU使用率:</strong> ${gpuInfo.gpu_usage_percent !== undefined ? gpuInfo.gpu_usage_percent + '%' : 'N/A'}
+                        </div>
+                    `;
+                }
+            } else {
+                hardwareHtml = '<div class="col-12"><span class="text-muted">硬體資訊不可用</span></div>';
+            }
+
+            hardwareInfoDisplay.innerHTML = hardwareHtml;
+        }
+
         // 渲染測試圖表
         function renderTestCharts(record) {
             const chartsContainer = document.getElementById('charts-container');
+
+            // 顯示測試條件和硬體條件
+            renderTestConditions(record);
+            renderHardwareInfo(record);
 
             if (record.test_type === 1) {
                 // 基礎壓力測試圖表
@@ -577,7 +830,12 @@
 
         function showError(message) {
             // 簡單的錯誤顯示，可以後續改為更好的UI
-            alert(message);
+            alert('❌ ' + message);
+        }
+
+        function showSuccess(message) {
+            // 簡單的成功顯示，可以後續改為更好的UI
+            alert('✅ ' + message);
         }
 
         // 篩選功能
@@ -609,22 +867,34 @@
                 fetch(`/api/history/${testId}`, {
                     method: 'DELETE'
                 })
-                .then(response => response.json())
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
                 .then(data => {
                     if (data.success) {
-                        loadHistoryRecords(currentPage);
-                        // 如果刪除的是當前選中的記錄，隱藏圖表
-                        const selectedCard = document.querySelector('.history-card.selected');
-                        if (selectedCard && selectedCard.dataset.testId === testId) {
-                            document.getElementById('charts-section').style.display = 'none';
+                        showSuccess('測試記錄已成功刪除');
+
+                        // 如果刪除的是當前查看圖表的記錄，隱藏圖表
+                        const chartSelectedCard = document.querySelector('.history-card.chart-selected');
+                        if (chartSelectedCard && chartSelectedCard.dataset.testId === testId) {
+                            const chartsSection = document.getElementById('charts-section');
+                            if (chartsSection) {
+                                chartsSection.style.display = 'none';
+                            }
                         }
+
+                        // 重新載入歷史記錄
+                        loadHistoryRecords(currentPage);
                     } else {
-                        showError('刪除記錄失敗: ' + data.error);
+                        showError('刪除記錄失敗: ' + (data.error || '未知錯誤'));
                     }
                 })
                 .catch(error => {
                     console.error('Error deleting record:', error);
-                    showError('刪除記錄時發生錯誤');
+                    showError('刪除記錄時發生錯誤: ' + error.message);
                 });
             }
         }
@@ -645,15 +915,102 @@
             }
         }
 
+        // 批量刪除功能
+        function deleteSelectedRecords() {
+            const selectedCheckboxes = document.querySelectorAll('.record-checkbox:checked');
+            if (selectedCheckboxes.length === 0) {
+                showError('請先選擇要刪除的記錄');
+                return;
+            }
+
+            const testIds = Array.from(selectedCheckboxes).map(checkbox => checkbox.dataset.testId);
+            const deleteList = document.getElementById('delete-list');
+
+            if (deleteList) {
+                // 顯示要刪除的記錄列表
+                deleteList.innerHTML = `
+                    <ul class="list-group">
+                        ${testIds.map(id => {
+                            const card = document.querySelector(`[data-test-id="${id}"]`);
+                            const testName = card ? card.querySelector('.card-title')?.textContent || '未知記錄' : '未知記錄';
+                            return `<li class="list-group-item">${testName}</li>`;
+                        }).join('')}
+                    </ul>
+                `;
+            }
+
+            // 顯示確認模態框
+            const deleteModalElement = document.getElementById('deleteModal');
+            if (deleteModalElement) {
+                const deleteModal = new bootstrap.Modal(deleteModalElement);
+                deleteModal.show();
+            }
+        }
+
+        function confirmDelete() {
+            const selectedCheckboxes = document.querySelectorAll('.record-checkbox:checked');
+            const testIds = Array.from(selectedCheckboxes).map(checkbox => checkbox.dataset.testId);
+
+            if (testIds.length === 0) {
+                showError('沒有選中的記錄');
+                return;
+            }
+
+            // 批量刪除記錄
+            Promise.all(testIds.map(testId =>
+                fetch(`/api/history/${testId}`, { method: 'DELETE' })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        return response.json();
+                    })
+            ))
+            .then(results => {
+                const successCount = results.filter(result => result.success).length;
+                const failCount = results.length - successCount;
+
+                if (failCount === 0) {
+                    showSuccess(`成功刪除 ${successCount} 條記錄`);
+                } else {
+                    showError(`刪除完成：成功 ${successCount} 條，失敗 ${failCount} 條`);
+                }
+
+                // 隱藏圖表區域
+                const chartsSection = document.getElementById('charts-section');
+                if (chartsSection) {
+                    chartsSection.style.display = 'none';
+                }
+
+                // 重新載入歷史記錄
+                loadHistoryRecords(currentPage);
+
+                // 關閉模態框
+                const deleteModalElement = document.getElementById('deleteModal');
+                if (deleteModalElement) {
+                    const deleteModal = bootstrap.Modal.getInstance(deleteModalElement);
+                    if (deleteModal) {
+                        deleteModal.hide();
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error in batch delete:', error);
+                showError('批量刪除時發生錯誤: ' + error.message);
+            });
+        }
+
         // 更新分頁
         function updatePagination(pagination) {
             // 分頁功能的實現將在後續添加
             const paginationContainer = document.getElementById('pagination-container');
-            if (pagination && pagination.total_pages > 1) {
-                // 這裡可以實現分頁控制項
-                paginationContainer.style.display = 'flex';
-            } else {
-                paginationContainer.style.display = 'none';
+            if (paginationContainer) {
+                if (pagination && pagination.total_pages > 1) {
+                    // 這裡可以實現分頁控制項
+                    paginationContainer.style.display = 'flex';
+                } else {
+                    paginationContainer.style.display = 'none';
+                }
             }
         }
     </script>
